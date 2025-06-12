@@ -112,9 +112,3 @@ Após a execução, serão criados:
   Rscript main.R
   ```
 - **Gráficos com fundo preto:** Já está corrigido, mas se acontecer, confira se o argumento `bg = "white"` está nas funções `ggsave`.
-
----
-
-## Contato
-
-Em caso de dúvidas ou problemas, abra uma issue ou entre em contato com o responsável pelo projeto. 
