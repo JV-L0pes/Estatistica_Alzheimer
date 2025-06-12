@@ -156,7 +156,7 @@ write.csv(resultados, "output/resultados/resultados_amostragem.csv", row.names =
 
 grafico1 <- ggplot(resultados, aes(x = tamanho_amostra, y = media_amostral)) +
   geom_point(color = "blue", alpha = 0.7, size = 2) +
-  geom_hline(yintercept = media_populacional, color = "red", size = 1.2,  # nolint # nolint
+  geom_hline(yintercept = media_populacional, color = "red", linewidth = 1.2,  # nolint # nolint
              linetype = "solid") +
   labs(
     title = paste("Convergência da Média Amostral para Média Populacional"),
@@ -186,7 +186,7 @@ ggsave(
 
 grafico2 <- ggplot(resultados, aes(x = tamanho_amostra, y = sqrt(variancia_media_amostral))) + # nolint
   geom_point(color = "darkgreen", alpha = 0.7, size = 2) +
-  geom_hline(yintercept = 0, color = "purple", size = 1.2, linetype = "solid") +
+  geom_hline(yintercept = 0, color = "purple", linewidth = 1.2, linetype = "solid") +
   labs(
     title = "Variância das Médias Amostrais vs Tamanho da Amostra",
     subtitle = paste("Variável:", variavel_escolhida),
