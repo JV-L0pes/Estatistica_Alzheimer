@@ -1,259 +1,400 @@
-# Configuração inicial
-rm(list = ls())  # Limpar environment
-set.seed(123)    # Reprodutibilidade
+# CONFIGURAÇÃO INICIAL E LIMPEZA
 
-# Carregar bibliotecas
+set.seed(123) # Reprodutibilidade garantida
 library(ggplot2)
 library(dplyr)
 library(readr)
 
-# 1. CARREGAMENTO E PREPARAÇÃO DOS DADOS
+# Função auxiliar para concatenação de strings
+concat_str <- function(...) paste0(..., collapse = "")
 
-# Diagnóstico do arquivo primeiro
-cat("=== DIAGNÓSTICO DO ARQUIVO ===\n")
-linhas_teste <- readLines("data/alzheimer_data.csv", n = 3)
-cat("Primeiras 3 linhas:\n")
-for (i in seq_along(linhas_teste)) {
-  cat("Linha", i, ":", substr(linhas_teste[i], 1, 100), "...\n")
+# FUNÇÕES AUXILIARES (SINGLE RESPONSIBILITY PRINCIPLE)
+
+#' Carrega e valida dataset com tratamento robusto de erros
+#' @param file_path Caminho para o arquivo CSV
+#' @return data.frame Dataset validado e limpo
+load_and_validate_data <- function(file_path = "data/alzheimer_data.csv") {
+  cat("=== CARREGAMENTO E VALIDAÇÃO DOS DADOS ===\n")
+
+  # Diagnóstico inicial do arquivo
+  sample_lines <- readLines(file_path, n = 3)
+  cat("Estrutura detectada:\n")
+  cat("- Linhas de amostra:", length(sample_lines), "\n")
+  cat("- Separador detectado: vírgula\n")
+
+  # Carregamento robusto com tratamento de erros
+  tryCatch(
+    {
+      dados <- read.csv(file_path,
+        header = TRUE, sep = ",",
+        stringsAsFactors = FALSE, strip.white = TRUE
+      )
+
+      # Validação de integridade
+      if (nrow(dados) == 0) stop("Dataset vazio")
+      if (ncol(dados) < 2) stop("Dataset deve ter ao menos 2 colunas")
+
+      cat("✓ Dataset carregado:", nrow(dados), "observações,", ncol(dados), "variáveis\n") # nolint
+      dados
+    },
+    error = function(e) {
+      stop("Erro crítico no carregamento: ", conditionMessage(e))
+    }
+  )
 }
 
-# Tentar diferentes métodos de leitura
-cat("\n=== TENTANDO DIFERENTES SEPARADORES ===\n")
+#' Identifica e extrai variável quantitativa apropriada
+#' @param dataset Data frame de entrada
+#' @return list(variable_name, data_vector, summary_stats)
+extract_quantitative_variable <- function(dataset) {
+  cat("=== SELEÇÃO DE VARIÁVEL QUANTITATIVA ===\n")
 
-# Carregar dataset (sem header, baseado na amostra fornecida)
-dados <- read.table("data/alzheimer_data.csv", header = TRUE, sep = ",", dec = ".", strip.white = TRUE, quote = "\"") # nolint
+  # Buscar variáveis numéricas apropriadas com critério mais flexível
+  numeric_vars <- sapply(dataset, function(x) {
+    if (is.numeric(x)) {
+      # Verificar se tem variabilidade suficiente
+      unique_vals <- length(unique(x[!is.na(x)]))
+      return(unique_vals >= 5 && unique_vals > length(x) * 0.1)
+    }
+    FALSE
+  })
 
-# Verificar estrutura
-print(paste(
-  "Número de observações:", nrow(dados)
-))
-print(paste(
-  "Número de variáveis:", ncol(dados)
-))
-
-# Definir nomes das colunas dinamicamente baseado no número real de colunas
-if (ncol(dados) >= 2) {
-  nomes_base <- c("id", "age", "gender", "education", "ses", "mmse", "cdr",  # nolint
-                  "etiv", "nwbv", "asf", "delay", "m_f", "hand", "group")
-   # nolint # nolint
-  if (ncol(dados) <= length(nomes_base)) {
-    colnames(dados) <- nomes_base[seq_len(ncol(dados))]
-  } else {
-    # Mais colunas que nomes predefinidos
-    nomes_extras <- paste0("var", (length(nomes_base) + 1):ncol(dados))
-    colnames(dados) <- c(nomes_base, nomes_extras)
+  if (!any(numeric_vars)) {
+    # Fallback: tentar converter colunas que parecem numéricas
+    for (col in names(dataset)) {
+      if (is.character(dataset[[col]])) {
+        numeric_attempt <- suppressWarnings(as.numeric(dataset[[col]]))
+        if (!all(is.na(numeric_attempt))) {
+          unique_vals <- length(unique(numeric_attempt[!is.na(numeric_attempt)])) # nolint
+          total_vals <- length(numeric_attempt)
+          if (unique_vals >= 5 && unique_vals > total_vals * 0.1) {
+            dataset[[col]] <- numeric_attempt
+            numeric_vars[col] <- TRUE
+            break
+          }
+        }
+      }
+    }
   }
-} else {
-  stop("Dataset tem apenas 1 coluna. Verifique o formato do arquivo.")
-}
 
-# Mostrar primeiras linhas
-cat("\n=== ESTRUTURA DOS DADOS ===\n")
-print(head(dados, 3))
-cat("Nomes das colunas:", paste(colnames(dados), collapse = ", "), "\n")
-
-# 2. SELEÇÃO DA VARIÁVEL QUANTITATIVA
-
-# Variável escolhida: AGE (segunda coluna)
-variavel_escolhida <- "age"
-
-# Verificar se variável existe e extrair dados
-if (!variavel_escolhida %in% colnames(dados)) {
-  stop("Variável não encontrada no dataset!")
-}
-
-# Extrair dados da variável (idade está na segunda coluna)
-dados_variavel <- dados[[variavel_escolhida]]
-
-# Verificar se são dados numéricos
-if (!is.numeric(dados_variavel)) {
-  dados_variavel <- as.numeric(dados_variavel)
-}
-
-# Remover valores NA se existirem
-dados_variavel <- dados_variavel[!is.na(dados_variavel)]
-n_populacional <- length(dados_variavel)
-
-print(paste("Variável selecionada:", variavel_escolhida))
-print(paste("Tamanho populacional (sem NAs):", n_populacional))
-print(paste("Faixa de valores:", min(dados_variavel), "a", max(dados_variavel)))
-
-# 3. CÁLCULO DA MÉDIA POPULACIONAL
-
-media_populacional <- mean(dados_variavel)
-print(paste("Média populacional:", round(media_populacional, 4)))
-
-# 4. PREPARAÇÃO DOS VETORES DE RESULTADOS
-
-# Criar vetores vazios
-media_amostral <- numeric()
-variancia_media_amostral <- numeric()
-tamanhos_amostrais <- numeric()
-
-# 5. LOOP DE AMOSTRAGEM (2%, 4%, 6%, ..., 98%)
-
-print("Iniciando loop de amostragem...")
-
-# Proporções: 2% até 98% (passo de 2%)
-proporcoes <- seq(0.02, 0.98, by = 0.02)
-
-for (i in seq_along(proporcoes)) {
-  prop <- proporcoes[i]
-   # nolint
-  # Calcular tamanho da amostra
-  n_amostra <- round(prop * n_populacional)
-   # nolint # nolint
-  # Evitar amostras muito pequenas
-  if (n_amostra < 2) n_amostra <- 2
-   # nolint # nolint
-  # Realizar Amostragem Aleatória Simples
-  indices_amostra <- sample(seq_len(n_populacional), size = n_amostra, replace = FALSE) # nolint # nolint
-  amostra <- dados_variavel[indices_amostra]
-   # nolint # nolint
-  # Calcular média amostral
-  media_atual <- mean(amostra)
-   # nolint # nolint
-  # Para variância das médias amostrais, usamos múltiplas amostras
-  # (simulação para demonstrar propriedades teóricas)
-  n_simulacoes <- 100
-  medias_simulacao <- numeric(n_simulacoes)
-   # nolint
-  for (j in seq_len(n_simulacoes)) {
-    indices_sim <- sample(seq_len(n_populacional), size = n_amostra, replace = FALSE) # nolint # nolint
-    amostra_sim <- dados_variavel[indices_sim]
-    medias_simulacao[j] <- mean(amostra_sim)
+  if (!any(numeric_vars)) {
+    stop("Nenhuma variável quantitativa adequada encontrada no dataset")
   }
-   # nolint # nolint
-  # Calcular variância das médias amostrais
-  variancia_atual <- var(medias_simulacao)
-   # nolint # nolint
-  # Armazenar resultados
-  tamanhos_amostrais <- c(tamanhos_amostrais, n_amostra)
-  media_amostral <- c(media_amostral, media_atual)
-  variancia_media_amostral <- c(variancia_media_amostral, variancia_atual)
-   # nolint
-  # Progress indicator
-  if (i %% 10 == 0) {
-    print(paste("Processando:", round(prop * 100), "% da população"))
+
+  # Selecionar primeira variável quantitativa válida
+  selected_var <- names(numeric_vars)[numeric_vars][1]
+  var_data <- dataset[[selected_var]]
+
+  # Limpeza de dados: remover NAs
+  var_data <- var_data[!is.na(var_data)]
+
+  if (length(var_data) < 50) {
+    stop("Variável selecionada tem poucos dados válidos (< 50 observações)")
   }
-}
 
-print("Loop de amostragem concluído!")
-
-# 6. CRIAR DATAFRAME DOS RESULTADOS
-
-resultados <- data.frame(
-  proporcao = proporcoes * 100,
-  tamanho_amostra = tamanhos_amostrais,
-  media_amostral = media_amostral,
-  variancia_media_amostral = variancia_media_amostral
-)
-
-# Salvar resultados
-write.csv(resultados, "output/resultados/resultados_amostragem.csv", row.names = FALSE) # nolint
-
-# 7. GRÁFICO 1: MÉDIAS AMOSTRAIS VS TAMANHOS AMOSTRAIS
-
-grafico1 <- ggplot(resultados, aes(x = tamanho_amostra, y = media_amostral)) +
-  geom_point(color = "blue", alpha = 0.7, size = 2) +
-  geom_hline(yintercept = media_populacional, color = "red", linewidth = 1.2,  # nolint # nolint
-             linetype = "solid") +
-  labs(
-    title = paste("Convergência da Média Amostral para Média Populacional"),
-    subtitle = paste("Variável:", variavel_escolhida),
-    x = "Tamanho da Amostra (n)",
-    y = "Média Amostral",
-    caption = paste("Linha vermelha: Média Populacional =",  # nolint
-                    round(media_populacional, 4))
-  ) +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
-    plot.subtitle = element_text(hjust = 0.5, size = 12),
-    axis.title = element_text(size = 11),
-    legend.position = "none"
+  summary_stats <- list(
+    name = selected_var,
+    n = length(var_data),
+    mean = mean(var_data),
+    sd = sd(var_data),
+    min = min(var_data),
+    max = max(var_data)
   )
 
-print(grafico1)
+  cat("✓ Variável selecionada:", selected_var, "\n")
+  cat("  - Observações válidas:", summary_stats$n, "\n")
+  cat("  - Média populacional:", round(summary_stats$mean, 4), "\n")
+  cat("  - Desvio padrão:", round(summary_stats$sd, 4), "\n")
 
-# Salvar gráfico
-ggsave(
-  "output/graficos/grafico1_medias_amostrais.png",  # nolint
-  grafico1, width = 10, height = 6, dpi = 300, bg = "white"
-)
+  list(
+    variable_name = selected_var,
+    data = var_data,
+    stats = summary_stats
+  )
+}
 
-# 8. GRÁFICO 2: VARIÂNCIA DAS MÉDIAS VS TAMANHOS AMOSTRAIS
+#' Executa simulação com amostragem aleatória estratificada
+#' @param dataset Dataset completo
+#' @param sample_proportions Vetor de proporções para amostragem
+#' @return data.frame Resultados da simulação
+perform_stratified_sampling_simulation <- function(dataset, # nolint
+                                                   sample_proportions = seq(0.02, 0.98, 0.02)) { # nolint
+  cat("=== SIMULAÇÃO COM AMOSTRAGEM ALEATÓRIA ESTRATIFICADA ===\n")
 
-grafico2 <- ggplot(resultados, aes(x = tamanho_amostra, y = sqrt(variancia_media_amostral))) + # nolint
-  geom_point(color = "darkgreen", alpha = 0.7, size = 2) +
-  geom_hline(yintercept = 0, color = "purple", linewidth = 1.2, linetype = "solid") +
-  labs(
-    title = "Variância das Médias Amostrais vs Tamanho da Amostra",
-    subtitle = paste("Variável:", variavel_escolhida),
-    x = "Tamanho da Amostra (n)",
-    y = "Variância das Médias Amostrais",
-    caption = "Linha roxa: y = 0 (referência)"
-  ) +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
-    plot.subtitle = element_text(hjust = 0.5, size = 12),
-    axis.title = element_text(size = 11),
-    legend.position = "none"
-  ) +
-  # Ajustar eixo y para tornar linha roxa visível
-  ylim(0, max(resultados$variancia_media_amostral) * 1.1)
+  # ESPECIFICAÇÃO DA AMOSTRAGEM ESTRATIFICADA:
+  # 1. População dividida em estratos por variável sexo
+  # 2. Alocação proporcional mantém proporções populacionais
+  # 3. Amostragem aleatória simples dentro de cada estrato
+  # 4. Combinação das amostras estratificadas para análise final
 
-print(grafico2)
+  # Identificar variável sexo/gender para estratificação
+  sex_cols <- c("sexo", "gender", "sex", "genero")
+  sex_var <- NULL
 
-# Salvar gráfico
-ggsave(
-  "output/graficos/grafico2_variancias_medias.png",  # nolint
-  grafico2, width = 10, height = 6, dpi = 300, bg = "white"
-)
+  for (col in sex_cols) {
+    if (col %in% names(dataset) && !all(is.na(dataset[[col]]))) {
+      sex_var <- col
+      break
+    }
+  }
 
-# 9. RESUMO ESTATÍSTICO
+  if (is.null(sex_var)) {
+    stop("Variável sexo não encontrada para estratificação")
+  }
 
-cat("\n=== RESUMO DOS RESULTADOS ===\n")
-cat("Variável analisada:", variavel_escolhida, "\n")
-cat("Tamanho populacional:", n_populacional, "\n")
-cat("Média populacional:", round(media_populacional, 4), "\n")
-cat("Número de amostras analisadas:", length(proporcoes), "\n")
-cat("Faixa de tamanhos amostrais:", min(tamanhos_amostrais), "a", max(tamanhos_amostrais), "\n") # nolint
-cat("Média das médias amostrais:", round(mean(media_amostral), 4), "\n")
-cat("Desvio padrão das médias amostrais:", round(sd(media_amostral), 4), "\n")
+  # Extrair variável quantitativa
+  var_info <- extract_quantitative_variable(dataset)
+  population_data <- var_info$data
+  population_mean <- var_info$stats$mean
+  population_var <- var(population_data)
 
-# 10. INTERPRETAÇÃO DOS GRÁFICOS
+  # PREPARAÇÃO DOS ESTRATOS
+  clean_data <- dataset[!is.na(dataset[[sex_var]]), ]
+  strata_distribution <- table(clean_data[[sex_var]])
+  strata_props <- strata_distribution / sum(strata_distribution)
 
-interpretacao <- paste0(
-  "=== INTERPRETAÇÃO DOS GRÁFICOS ===\n\n",
-   # nolint # nolint
-  "GRÁFICO 1 - Convergência da Média Amostral:\n",
-  "• As médias amostrais oscilam em torno da média populacional (linha vermelha).\n", # nolint
-  "• À medida que o tamanho da amostra aumenta, as médias amostrais tendem a se aproximar da média populacional.\n", # nolint
-  "• Isso demonstra a propriedade de que a média amostral é um estimador não-viesado da média populacional.\n", # nolint
-  "• A variabilidade das médias amostrais diminui com o aumento do tamanho da amostra.\n\n", # nolint # nolint
-   # nolint
-  "GRÁFICO 2 - Variância das Médias Amostrais:\n",
-  "• A variância das médias amostrais diminui à medida que o tamanho da amostra aumenta.\n", # nolint
-  "• Isso ilustra que amostras maiores produzem estimativas mais precisas da média populacional.\n", # nolint
-  "• A tendência decrescente confirma o Teorema do Limite Central: Var(X̄) = σ²/n.\n", # nolint # nolint
-  "• A linha roxa (y=0) serve como referência, mostrando que a variância se aproxima de zero para amostras muito grandes.\n\n", # nolint # nolint
-   # nolint
-  "CONCLUSÃO:\n",
-  "Os gráficos demonstram duas propriedades fundamentais da inferência estatística:\n", # nolint
-  "1. Consistência: À medida que n aumenta, as médias amostrais convergem para a média populacional.\n", # nolint
-  "2. Eficiência: Amostras maiores resultam em estimativas mais precisas (menor variabilidade).\n" # nolint
-)
+  cat("✓ ESTRATIFICAÇÃO IMPLEMENTADA:\n")
+  cat("  • Variável de estratificação:", sex_var, "\n")
+  cat("  • Método: Alocação proporcional\n")
+  cat("  • Estratos identificados:\n")
+  for (i in seq_along(strata_props)) {
+    cat(
+      "    -", names(strata_props)[i], ":", strata_distribution[i],
+      "obs (", round(strata_props[i] * 100, 1), "% da população)\n"
+    )
+  }
 
-cat(interpretacao)
+  n_population <- nrow(clean_data)
+  n_simulations <- length(sample_proportions)
 
-# Salvar interpretação
-writeLines(interpretacao, "output/resultados/interpretacao_graficos.txt")
+  results <- data.frame(
+    proporcao = numeric(n_simulations),
+    tamanho_amostra = integer(n_simulations),
+    media_amostral = numeric(n_simulations),
+    variancia_teorica = numeric(n_simulations),
+    variancia_empirica = numeric(n_simulations)
+  )
 
-cat("\n=== ARQUIVOS GERADOS ===\n")
-cat("• Resultados: output/resultados/resultados_amostragem.csv\n")
-cat("• Gráfico 1: output/graficos/grafico1_medias_amostrais.png\n")
-cat("• Gráfico 2: output/graficos/grafico2_variancias_medias.png\n")
-cat("• Interpretação: output/resultados/interpretacao_graficos.txt\n")
-cat("\nExercício da Parte 2 concluído com sucesso!\n")
+  cat("Executando", n_simulations, "simulações estratificadas...\n")
+
+  for (i in seq_along(sample_proportions)) {
+    prop <- sample_proportions[i]
+    total_sample_size <- max(10, round(prop * n_population))
+
+    # PROCESSO DE AMOSTRAGEM ESTRATIFICADA:
+    # Para cada proporção (2%, 4%, 6%, ..., 98%):
+
+    # ETAPA 1: Calcular tamanho amostral por estrato (alocação proporcional)
+    stratified_sample <- data.frame()
+
+    for (stratum in names(strata_distribution)) {
+      stratum_data <- clean_data[clean_data[[sex_var]] == stratum, ]
+
+      # Tamanho do estrato = proporção populacional × tamanho total da amostra
+      stratum_size <- round(total_sample_size * strata_props[stratum])
+
+      # ETAPA 2: Amostragem aleatória simples dentro do estrato
+      if (stratum_size > 0 && stratum_size <= nrow(stratum_data)) {
+        # Seleção aleatória SEM reposição dentro do estrato
+        sampled_indices <- sample(nrow(stratum_data), size = stratum_size, replace = FALSE) # nolint
+        stratum_sample <- stratum_data[sampled_indices, ]
+
+        # ETAPA 3: Combinar amostras de todos os estratos
+        stratified_sample <- rbind(stratified_sample, stratum_sample)
+      }
+    }
+
+    # ETAPA 4: Extrair dados da variável quantitativa da amostra combinada
+    sample_quant_data <- stratified_sample[[var_info$variable_name]]
+    sample_quant_data <- sample_quant_data[!is.na(sample_quant_data)]
+
+    if (length(sample_quant_data) > 0) {
+      sample_mean <- mean(sample_quant_data)
+      actual_sample_size <- length(sample_quant_data)
+
+      # Variância teórica
+      theoretical_var <- population_var / actual_sample_size
+
+      # Variância empírica (múltiplas amostras estratificadas)
+      # MÉTODO: Repetir processo de amostragem estratificada 30 vezes
+      empirical_means <- replicate(30, {
+        temp_stratified <- data.frame()
+
+        # Para cada repetição, aplicar mesmo processo estratificado:
+        for (stratum in names(strata_distribution)) {
+          stratum_data <- clean_data[clean_data[[sex_var]] == stratum, ]
+          stratum_size <- round(total_sample_size * strata_props[stratum])
+
+          if (stratum_size > 0 && stratum_size <= nrow(stratum_data)) {
+            # Nova amostragem aleatória dentro do estrato
+            temp_indices <- sample(nrow(stratum_data), size = stratum_size, replace = FALSE) # nolint
+            temp_sample <- stratum_data[temp_indices, ]
+            temp_stratified <- rbind(temp_stratified, temp_sample)
+          }
+        }
+
+        # Calcular média da amostra estratificada
+        temp_quant <- temp_stratified[[var_info$variable_name]]
+        temp_quant <- temp_quant[!is.na(temp_quant)]
+        if (length(temp_quant) > 0) mean(temp_quant) else NA
+      })
+
+      empirical_var <- var(empirical_means, na.rm = TRUE)
+
+      results[i, ] <- list(
+        proporcao = prop * 100,
+        tamanho_amostra = actual_sample_size,
+        media_amostral = sample_mean,
+        variancia_teorica = theoretical_var,
+        variancia_empirica = empirical_var
+      )
+    }
+
+    if (i %% 10 == 0) {
+      cat("  Progresso:", round(i / n_simulations * 100), "%\n")
+    }
+  }
+
+  cat("✓ PROCESSO COMPLETO DE AMOSTRAGEM ESTRATIFICADA:\n")
+  cat("  • Simulações executadas:", n_simulations, "\n")
+  cat("  • Método de alocação: Proporcional\n")
+  cat("  • Seleção intra-estrato: Aleatória simples sem reposição\n")
+  cat("  • Variância calculada: Empírica (30 repetições por tamanho)\n")
+
+  list(
+    results = results,
+    population_mean = population_mean,
+    variable_name = var_info$variable_name,
+    stratification_var = sex_var
+  )
+}
+
+#' Gera gráficos de alta qualidade com tema consistente
+#' @param results_df Data frame com resultados da simulação
+#' @param population_mean Média populacional
+#' @param variable_name Nome da variável analisada
+#' Gera gráficos originais com amostragem estratificada
+create_convergence_plots <- function(simulation_results) {
+  cat("=== GRÁFICOS ===\n")
+
+  results_df <- simulation_results$results
+  population_mean <- simulation_results$population_mean
+  variable_name <- simulation_results$variable_name
+
+  custom_theme <- theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, size = 11, color = "gray40"),
+      axis.title = element_text(size = 11, face = "bold"),
+      panel.grid.minor = element_blank()
+    )
+
+  # GRÁFICO 1: Convergência da Média Amostral
+  ggplot(results_df, aes(x = .data$tamanho_amostra, y = .data$media_amostral)) +
+    geom_point(color = "#2E86AB", alpha = 0.7, size = 2) +
+    geom_hline(
+      yintercept = population_mean, color = "#A23B72",
+      linewidth = 1.2, linetype = "solid"
+    ) +
+    labs(
+      title = "Convergência da Média Amostral",
+      subtitle = paste("Amostragem Aleatória Estratificada -", variable_name),
+      x = "Tamanho da Amostra (n)",
+      y = "Média Amostral",
+      caption = paste("Linha vermelha: Média Populacional =", round(population_mean, 3)) # nolint
+    ) +
+    custom_theme
+
+  ggsave("output/graficos/grafico1_convergencia_estratificada.png",
+    width = 10, height = 6, dpi = 300, bg = "white"
+  )
+
+  # GRÁFICO 2: Variância das Médias Amostrais
+  ggplot(results_df, aes(x = .data$tamanho_amostra)) +
+    geom_point(aes(y = .data$variancia_empirica),
+      color = "#2E86AB",
+      alpha = 0.7, size = 2, shape = 16
+    ) +
+    geom_line(aes(y = .data$variancia_teorica),
+      color = "#A23B72",
+      linewidth = 1.2, linetype = "dashed"
+    ) +
+    labs(
+      title = "Variância das Médias Amostrais",
+      subtitle = paste("Amostragem Aleatória Estratificada -", variable_name),
+      x = "Tamanho da Amostra (n)",
+      y = "Variância das Médias Amostrais",
+      caption = "Linha tracejada: Variância Teórica"
+    ) +
+    custom_theme
+
+  ggsave("output/graficos/grafico2_variancia_estratificada.png",
+    width = 10, height = 6, dpi = 300, bg = "white"
+  )
+
+  cat("✓ Gráficos salvos\n")
+}
+
+# EXECUÇÃO PRINCIPAL (ORCHESTRATION)
+
+main_analysis <- function() {
+  cat("ANÁLISE COM AMOSTRAGEM ALEATÓRIA ESTRATIFICADA\n")
+  cat(paste(rep("=", 50), collapse = ""), "\n\n")
+
+  # 1. Carregamento
+  dataset <- load_and_validate_data()
+
+  # 2. Simulação com amostragem estratificada
+  simulation_results <- perform_stratified_sampling_simulation(dataset)
+
+  # 3. Gráficos de convergência
+  create_convergence_plots(simulation_results)
+
+  # 4. Salvar resultados
+  write.csv(simulation_results$results,
+    "output/resultados/resultados_estratificada.csv",
+    row.names = FALSE
+  )
+
+  # 5. Relatório resumido
+  generate_brief_report(simulation_results)
+
+  cat("\n", paste(rep("=", 50), collapse = ""), "\n")
+  cat("✅ ANÁLISE CONCLUÍDA\n")
+}
+
+#' Gera relatório de interpretação automático
+#' Gera relatório resumido sem explicações
+generate_brief_report <- function(simulation_results) {
+  results_df <- simulation_results$results
+
+  report_content <- paste0(
+    "ESPECIFICAÇÃO DA AMOSTRAGEM ALEATÓRIA ESTRATIFICADA\n\n",
+    "MÉTODO IMPLEMENTADO:\n",
+    "• Tipo: Amostragem Aleatória Estratificada\n",
+    "• Alocação: Proporcional\n",
+    "• Estratos: Definidos pela variável ", simulation_results$stratification_var, "\n", # nolint
+    "• Seleção intra-estrato: Aleatória simples sem reposição\n\n",
+    "PROCESSO EXECUTADO:\n",
+    "1. População dividida em estratos por sexo\n",
+    "2. Tamanho de cada estrato calculado proporcionalmente\n",
+    "3. Amostragem aleatória simples dentro de cada estrato\n",
+    "4. Combinação das amostras estratificadas\n",
+    "5. Cálculo das estatísticas da amostra final\n\n",
+    "RESULTADOS:\n",
+    "• Variável analisada: ", simulation_results$variable_name, "\n",
+    "• Média populacional: ", round(simulation_results$population_mean, 4), "\n", # nolint
+    "• Simulações realizadas: ", nrow(results_df), "\n",
+    "• Faixa amostral: ", min(results_df$tamanho_amostra), " a ",
+    max(results_df$tamanho_amostra), " observações\n",
+    "• Média das médias amostrais: ", round(mean(results_df$media_amostral, na.rm = TRUE), 4), "\n" # nolint
+  )
+
+  writeLines(report_content, "output/resultados/relatorio_resumido.txt")
+  cat("✓ Relatório gerado\n")
+}
+
+# EXECUÇÃO
+
+# Executar análise principal
+main_analysis()

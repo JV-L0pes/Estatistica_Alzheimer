@@ -1,0 +1,29 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Arquivos de dados e saída
+data/*.csv
+data/*.xlsx
+data/*.xls
+output/*
+!output/.gitkeep
+
+# Arquivos de ambiente virtual
+.Renviron
+.Rprofile
+
+# Arquivos de cache
+.Rcache/
+.Rapp.history
+
+# Arquivos temporários
+*.tmp
+*.temp
+*.swp
+*~
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
